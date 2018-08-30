@@ -2,6 +2,7 @@ import os
 import re
 import io
 import sys
+import csv
 import argparse
 
 import PyPDF2
@@ -10,7 +11,7 @@ import PyPDF2
 def strip_punctuation(full_name):
     things_to_remove = ["'", "-", ".", " "]
     for thing in things_to_remove:
-        full_name = full_name.replace(thing, "")
+       full_name = full_name.replace(thing, "")
     return full_name
 
 
@@ -27,7 +28,7 @@ def get_course_string_re():
 
 
 def get_courses_re():
-    return re.compile('(([A-Z0-9]+?)[a-z](M(r|s) [A-Z]\. [a-zA-Z]+?)(([0-9]{3}|PTB3))|\.\.\.)')
+    return re.compile('(([A-Z0-9]+?)[a-z]((M(r|s|rs)\.? )?[A-Z]\. [a-zA-Z\-\']+?)(([0-9]{3}|PTB3))|\.\.\.)')
 
 
 def get_username(text, oen_match):
@@ -54,16 +55,15 @@ def file_checker(args, value_type, message):
                 print(f"{value} is not a valid location")
                 value = None
 
-def main(filename, output_dir):
 
+def get_student_data(maplewood):
     oen_re = get_oen_re()
     ugcloud_re = get_ugcloud_re()
     course_string_re = get_course_string_re()
     courses_re = get_courses_re()
-
     reader = None
     student_data = {}
-    with open(filename, 'rb') as f:
+    with open(maplewood, 'rb') as f:
         reader = PyPDF2.PdfFileReader(f)
 
         writer = PyPDF2.PdfFileWriter()
@@ -78,7 +78,7 @@ def main(filename, output_dir):
                 email_address = get_username(text, oen)
                 ugcloud = ugcloud_re.search(email_address)
                 print(f"processing {email_address}...", end="")
-                student_oen = oen.group(1).replace('-','')
+                student_oen = oen.group(1)
                 student_data[student_oen] = {'ugcloud': email_address} 
                 course_string = course_string_re.search(text)
                 courses = courses_re.finditer(course_string.group())
@@ -86,13 +86,41 @@ def main(filename, output_dir):
                 for item in courses:
                     student_data[student_oen][f"period {period} course"] = item.group(2)
                     student_data[student_oen][f"period {period} teacher"] = item.group(3)
-                    student_data[student_oen][f"period {period} room"] = item.group(5)
+                    student_data[student_oen][f"period {period} room"] = item.group(6)
                     period += 1
 
                 if not ugcloud:
                     print(f"{email_address} is not a valid UGCloud address")
+
+    return student_data
+
+
+
+def main(maplewood, iep, output):
+    student_data = get_student_data(maplewood)
+    combined_data = []
+
+    with open(iep, 'r') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if row[1] in student_data:
+                student_data[row[1]]['name'] = row[0]
+                student_data[row[1]]['oen'] = row[1]
+                student_data[row[1]]['accommodations'] = row[2]
+                combined_data.append(student_data[row[1]])
+
+    with open(args.output,'w', newline='') as f:
+        fieldnames = ['name', 'oen', 'ugcloud',
+                      'period 1 course', 'period 1 teacher', 'period 1 room',
+                      'period 2 course', 'period 2 teacher', 'period 2 room',
+                      'period 3 course', 'period 3 teacher', 'period 3 room',
+                      'period 4 course', 'period 4 teacher', 'period 4 room',
+                      'accommodations']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(combined_data)
+
                     
-    import pdb; pdb.set_trace()
 
 
 
@@ -100,10 +128,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=("Take a Maplewood timetable "
         "pdf and split it into individual files named with a student's ugcloud"
         " user name"))
-    parser.add_argument("-f", "--filename", dest="filename")
+    parser.add_argument("-iep", "--iep", dest="iep")
+    parser.add_argument("-mw", "--maplewood", dest="maplewood")
     parser.add_argument("-o", "--output", dest="output")
     args = parser.parse_args()
-    filename = file_checker(args, "filename", "Maplewood Timetable")
+    maplewood = file_checker(args, "maplewood", "Maplewood Timetable")
+    iep = file_checker(args, "iep", "IEP Engine CSV")
     output = file_checker(args, "output", "Output")
 
-    main(filename, output)
+    main(maplewood, iep, output)
